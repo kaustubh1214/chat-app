@@ -1,16 +1,20 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 
-export default function Chat({ me, other }) {
+export default function ChatWindow({ me, other }) {
   const [messages, setMessages] = useState([]);
-  const [newMessage, setNewMessage] = useState("");
-  const listRef = useRef(null);
+  const [input, setInput] = useState("");
+  const listRef = useRef();
 
   useEffect(() => {
-    if (!me?.id || !other?.id) return;
+    if (!me || !other) {
+      setMessages([]);
+      return;
+    }
 
-    // ✅ Fetch old messages
-    const fetchMessages = async () => {
+    let mounted = true;
+
+    const loadMessages = async () => {
       const { data, error } = await supabase
         .from("messages")
         .select("*")
@@ -19,25 +23,18 @@ export default function Chat({ me, other }) {
         )
         .order("created_at", { ascending: true });
 
-      if (error) {
-        console.error("Error fetching messages:", error);
-      } else {
-        setMessages(data || []);
-      }
+      if (error) console.error(error);
+      if (mounted) setMessages(data || []);
     };
 
-    fetchMessages();
+    loadMessages();
 
-    // ✅ Subscribe to new messages in real-time
+    // ✅ Supabase real-time subscription
     const channel = supabase
-      .channel("messages")
+      .channel(`messages:dm:${[me.id, other.id].sort().join(":")}`)
       .on(
         "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "messages",
-        },
+        { event: "INSERT", schema: "public", table: "messages" },
         (payload) => {
           const m = payload.new;
           if (
@@ -45,7 +42,8 @@ export default function Chat({ me, other }) {
             (m.sender_id === other.id && m.recipient_id === me.id)
           ) {
             setMessages((prev) => {
-              if (prev.find((msg) => msg.id === m.id)) return prev; // prevent duplicates
+              // ✅ Avoid duplicates
+              if (prev.find((msg) => msg.id === m.id)) return prev;
               return [...prev, m];
             });
           }
@@ -54,75 +52,115 @@ export default function Chat({ me, other }) {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      mounted = false;
+      if (channel) supabase.removeChannel(channel);
     };
-  }, [me?.id, other?.id]);
+  }, [me, other]);
 
-  // ✅ Auto-scroll when messages change
+  // Auto-scroll
   useEffect(() => {
     if (listRef.current) {
       listRef.current.scrollTop = listRef.current.scrollHeight;
     }
   }, [messages]);
 
-  // ✅ Send message
   const sendMessage = async () => {
-    if (!newMessage.trim()) return;
+    if (!input.trim()) return;
 
-    const { error } = await supabase.from("messages").insert([
-      {
+    const content = input.trim();
+    setInput("");
+
+    // ✅ Optimistically add temp message
+    const tempId = `temp-${Date.now()}`;
+    const newMessage = {
+      id: tempId,
+      sender_id: me.id,
+      recipient_id: other.id,
+      content,
+      created_at: new Date().toISOString(),
+      optimistic: true,
+    };
+    setMessages((prev) => [...prev, newMessage]);
+
+    // Insert into DB
+    const { data, error } = await supabase
+      .from("messages")
+      .insert({
         sender_id: me.id,
         recipient_id: other.id,
-        content: newMessage.trim(),
-      },
-    ]);
+        content,
+      })
+      .select()
+      .single();
 
     if (error) {
-      console.error("Error sending message:", error);
-    } else {
-      setNewMessage("");
+      console.error(error);
+      // rollback on error
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      setInput(content);
+    } else if (data) {
+      // Replace temp with actual DB row
+      setMessages((prev) =>
+        prev.map((m) => (m.id === tempId ? data : m))
+      );
     }
   };
 
+  if (!other) {
+    return (
+      <div className="h-full flex items-center justify-center text-gray-500">
+        Select a user to start chatting
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col h-screen max-w-lg mx-auto bg-gray-50">
+    <div className="h-screen flex flex-col">
       {/* Header */}
-      <div className="p-4 bg-blue-600 text-white text-lg font-semibold">
-        Chat with {other.name}
+      <div className="p-4 border-b">
+        <div className="font-semibold">
+          Chat with {other.username || "Unnamed"}
+        </div>
       </div>
 
       {/* Messages */}
-      <div
-        ref={listRef}
-        className="flex-1 overflow-y-auto p-4 space-y-3"
-      >
-        {messages.map((msg) => (
+      <div className="flex-1 overflow-auto p-4" ref={listRef}>
+        {messages.map((m) => (
           <div
-            key={msg.id}
-            className={`p-2 rounded-lg max-w-xs ${
-              msg.sender_id === me.id
-                ? "bg-blue-500 text-white self-end ml-auto"
-                : "bg-gray-200 text-gray-900 self-start mr-auto"
+            key={m.id}
+            className={`mb-3 flex ${
+              m.sender_id === me.id ? "justify-end" : "justify-start"
             }`}
           >
-            {msg.content}
+            <div
+              className={`p-2 rounded-lg max-w-[70%] ${
+                m.sender_id === me.id
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-200 text-black"
+              }`}
+            >
+              <div className="text-sm">{m.content}</div>
+              <div className="text-xs text-gray-600 mt-1">
+                {new Date(m.created_at).toLocaleTimeString()}
+                {m.optimistic && " • sending..."}
+              </div>
+            </div>
           </div>
         ))}
       </div>
 
       {/* Input */}
-      <div className="p-4 border-t flex items-center space-x-2">
+      <div className="p-4 border-t flex gap-2">
         <input
-          type="text"
-          placeholder="Type a message..."
-          className="flex-1 border rounded-lg px-3 py-2 focus:outline-none"
-          value={newMessage}
-          onChange={(e) => setNewMessage(e.target.value)}
+          className="flex-1 border rounded px-3 py-2"
+          placeholder="Type a message"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && sendMessage()}
         />
         <button
           onClick={sendMessage}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg"
+          className="bg-blue-600 text-white px-4 py-2 rounded"
         >
           Send
         </button>
