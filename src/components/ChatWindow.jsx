@@ -29,7 +29,6 @@ export default function ChatWindow({ me, other }) {
 
     loadMessages();
 
-    // ✅ Supabase real-time subscription
     const channel = supabase
       .channel(`messages:dm:${[me.id, other.id].sort().join(":")}`)
       .on(
@@ -42,7 +41,6 @@ export default function ChatWindow({ me, other }) {
             (m.sender_id === other.id && m.recipient_id === me.id)
           ) {
             setMessages((prev) => {
-              // ✅ Avoid duplicates
               if (prev.find((msg) => msg.id === m.id)) return prev;
               return [...prev, m];
             });
@@ -57,7 +55,6 @@ export default function ChatWindow({ me, other }) {
     };
   }, [me, other]);
 
-  // Auto-scroll
   useEffect(() => {
     if (listRef.current) {
       listRef.current.scrollTop = listRef.current.scrollHeight;
@@ -70,7 +67,6 @@ export default function ChatWindow({ me, other }) {
     const content = input.trim();
     setInput("");
 
-    // ✅ Optimistically add temp message
     const tempId = `temp-${Date.now()}`;
     const newMessage = {
       id: tempId,
@@ -82,7 +78,6 @@ export default function ChatWindow({ me, other }) {
     };
     setMessages((prev) => [...prev, newMessage]);
 
-    // Insert into DB
     const { data, error } = await supabase
       .from("messages")
       .insert({
@@ -95,11 +90,9 @@ export default function ChatWindow({ me, other }) {
 
     if (error) {
       console.error(error);
-      // rollback on error
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
       setInput(content);
     } else if (data) {
-      // Replace temp with actual DB row
       setMessages((prev) =>
         prev.map((m) => (m.id === tempId ? data : m))
       );
@@ -135,12 +128,16 @@ export default function ChatWindow({ me, other }) {
             <div
               className={`p-2 rounded-lg max-w-[70%] ${
                 m.sender_id === me.id
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-200 text-black"
+                  ? "bg-blue-500 text-white" // clearer blue for sender
+                  : "bg-gray-100 text-gray-900" // lighter bg + dark text for receiver
               }`}
             >
               <div className="text-sm">{m.content}</div>
-              <div className="text-xs text-gray-600 mt-1">
+              <div
+                className={`text-xs mt-1 ${
+                  m.sender_id === me.id ? "text-blue-100" : "text-gray-600"
+                }`}
+              >
                 {new Date(m.created_at).toLocaleTimeString()}
                 {m.optimistic && " • sending..."}
               </div>
