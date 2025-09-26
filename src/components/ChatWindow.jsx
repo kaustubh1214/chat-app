@@ -108,7 +108,7 @@ export default function ChatWindow({ me, other }) {
   }
 
   return (
-    <div className="h-screen flex flex-col">
+    <div className="h-full flex flex-col">
       {/* Header */}
       <div className="p-4 border-b">
         <div className="font-semibold">
@@ -128,8 +128,8 @@ export default function ChatWindow({ me, other }) {
             <div
               className={`p-2 rounded-lg max-w-[70%] ${
                 m.sender_id === me.id
-                  ? "bg-blue-500 text-white" // clearer blue for sender
-                  : "bg-gray-100 text-gray-900" // lighter bg + dark text for receiver
+                  ? "bg-blue-500 text-white"
+                  : "bg-gray-100 text-gray-900"
               }`}
             >
               <div className="text-sm">{m.content}</div>
